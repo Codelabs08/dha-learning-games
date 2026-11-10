@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Game title</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@600;800&display=swap">
+<link rel="stylesheet" href="../../../shared/game-core.css">
+<style>
+/* Game-specific styles only. Shared look (cards, big buttons, overlay, teacher menu) is in shared/game-core.css */
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <div class="brand">Game title</div>
+    <div class="hud"><div id="score" aria-label="Score">🏅 0</div></div>
+  </header>
+  <main id="app"></main>
+  <p class="hint">Teacher: press T for sound and restart.</p>
+</div>
+<div id="ov" hidden></div>
+
+<script src="../../../shared/game-core.js"></script>
+<script>
+(function(){
+  var D=window.DHA, el=D.el, speak=D.speak, sfx=D.sfx;
+  var app=document.getElementById('app'), db=D.store('mygame');   // rename 'mygame': keeps saved data separate per game
+
+  /* ---- content: picture-first, everything spoken ---- */
+  var QS=[
+    {scene:'🐢🌊❓', say:'Which one helps you find out about turtles?', opts:[['🔎','Search',1],['🖨️','Printer',0],['🔦','Torch',0]], ok:'We can search to find facts.'}
+  ];
+
+  /* ---- screens ---- */
+  var i=0, score=0;
+  function start(){
+    app.innerHTML='';
+    var c=el('div','card');
+    c.appendChild(el('div','scene','🎮'));
+    var b=el('button','btn coral','▶ Start'); b.type='button';
+    b.onclick=function(){sfx('ok');i=0;score=0;ask()};
+    c.appendChild(b); app.appendChild(c);
+  }
+  function ask(){
+    var q=QS[i]; app.innerHTML='';
+    var c=el('div','card');
+    c.appendChild(el('div','scene',q.scene));
+    c.appendChild(el('p','caption',q.say));
+    var hear=el('button','say','🔊'); hear.type='button'; hear.onclick=function(){speak(q.say)}; c.appendChild(hear);
+    var fb=el('p','feedback',''); c.appendChild(fb);
+    var row=el('div','row');
+    D.shuffle(q.opts).forEach(function(o){
+      var b=el('button','big pick','<span class="ico">'+o[0]+'</span>'+o[1]); b.type='button';
+      b.onclick=function(){
+        if(o[2]){b.classList.add('right');sfx('ok');score++;document.getElementById('score').textContent='🏅 '+score;
+          fb.className='feedback ok';fb.textContent='⭐ '+q.ok;speak('Well done! '+q.ok);
+          setTimeout(function(){i++;i<QS.length?ask():end()},1800)}
+        else{b.classList.remove('wrong');void b.offsetWidth;b.classList.add('wrong');sfx('no');speak('Try again.')}
+      };
+      row.appendChild(b);
+    });
+    c.appendChild(row); app.appendChild(c); speak(q.say);
+  }
+  function end(){
+    app.innerHTML=''; var c=el('div','card');
+    c.appendChild(el('div','scene','🏆')); c.appendChild(el('p','caption','Well done!'));
+    app.appendChild(c); sfx('win'); D.confetti(); speak('Well done!');
+  }
+
+  /* ---- teacher menu: voice + sound toggles are automatic. Add restart and extras here ---- */
+  D.teacherMenu({ restart:start, items:[ /* ['Skip to the end', end] */ ] });
+  start();
+})();
+</script>
+</body>
+</html>

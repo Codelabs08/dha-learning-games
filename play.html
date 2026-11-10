@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Play</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="player-page">
+  <div class="bar">
+    <a class="brand-logo sm" href="./" title="Home"><img src="assets/dha-logo.png" alt="DHA"></a>
+    <a class="btn" id="back" href="./">← All games</a>
+    <h1 id="title">Loading…</h1>
+    <button class="btn ghost hide-sm" id="restart" type="button">↻ Restart</button>
+    <button class="btn ghost" id="fs" type="button">⛶ Full screen</button>
+  </div>
+  <div class="stage"><iframe id="frame" title="Game" allow="fullscreen; autoplay; gamepad" allowfullscreen></iframe></div>
+  <script>
+    (async () => {
+      const id = new URLSearchParams(location.search).get("g");
+      const [site, data] = await Promise.all([
+        fetch("site.json").then(r => r.json()),
+        fetch("games.json", { cache: "no-store" }).then(r => r.json()),
+      ]);
+      const g = data.games.find(x => x.id === id);
+      const title = document.getElementById("title");
+      if (!g) { title.textContent = "Game not found"; return; }
+      title.textContent = g.title;
+      document.title = `${g.title} · ${site.title}`;
+      document.getElementById("back").href = `./?s=${encodeURIComponent(g.subject)}`;
+      const frame = document.getElementById("frame");
+      frame.src = g.url;
+      frame.addEventListener("load", () => frame.focus());
+      document.getElementById("restart").onclick = () => { frame.src = g.url; };
+      document.getElementById("fs").onclick = () => { (frame.requestFullscreen || frame.webkitRequestFullscreen).call(frame); };
+    })();
+  </script>
+</body>
+</html>

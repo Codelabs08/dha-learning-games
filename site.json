@@ -1,0 +1,10 @@
+{
+  "title": "DHA Learning Games",
+  "tagline": "Browser games for Years 1–4, made by Mr Robin. No logins, no ads, nothing to install.",
+  "subjects": {
+    "y1": { "name": "Year 1", "emoji": "🌱", "colour": "#3AA7A0" },
+    "y2": { "name": "Year 2", "emoji": "🚦", "colour": "#E8746C" },
+    "y3": { "name": "Year 3", "emoji": "📱", "colour": "#7c3aed" },
+    "y4": { "name": "Year 4", "emoji": "💻", "colour": "#2A2660" }
+  }
+}

@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Traffic Light Choices</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@600;800&display=swap">
+<link rel="stylesheet" href="../../../shared/game-core.css">
+<style>
+/* Game-specific styles only. Shared look lives in shared/game-core.css */
+#dots{display:flex;gap:6px;flex-wrap:wrap}
+.dot{width:16px;height:16px;border-radius:50%;background:#e3dccb}
+.dot.now{background:var(--navy);transform:scale(1.25)}
+.dot.star{background:var(--sun)}
+.dot.done{background:var(--teal)}
+.go{background:var(--go)} .ask{background:var(--ask)} .stop{background:var(--stop)}
+.lights{display:flex;gap:18px;flex-wrap:wrap;justify-content:center}
+.lamp{width:min(28vw,150px);aspect-ratio:1;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:1.6rem;color:#fff;border:4px solid rgba(0,0,0,.18)}
+.gamewrap{display:flex;flex-direction:column;gap:14px;align-items:center}
+.gcanvas{width:100%;max-width:960px;aspect-ratio:16/9;display:block;border:4px solid var(--navy);border-radius:22px;background:#8fd3ee;touch-action:manipulation;cursor:pointer;outline:none}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <div class="brand">Traffic Light Choices</div>
+    <div class="hud"><div id="dots" aria-hidden="true"></div><div id="score" aria-label="Score">🏅 0</div><div id="coins" aria-label="Coins">🪙 0</div></div>
+  </header>
+  <main id="app"></main>
+  <p class="hint">Teacher: press T for sound and restart.</p>
+</div>
+<div id="ov" hidden></div>
+
+<script src="../../../shared/game-core.js"></script>
+<script>
+(function(){
+  /* ---------- content ---------- */
+  var R1=[
+    {scene:"📱💬👤❓",say:"A stranger sends you a message. Do you answer?",ans:"stop",ok:"Stop! Do not answer someone you do not know. Tell a grown-up.",no:"Think again. We do not know this person."},
+    {scene:"💻📝🏫❓",say:"A website asks for your name and your school.",ans:"ask",ok:"Ask a grown-up first. Our private information stays safe.",no:"Think again. Is it safe to give our private information?"},
+    {scene:"📷🧒😀",say:"You want to share a photo of your friend.",ans:"ask",ok:"Ask your friend and a grown-up first.",no:"Think again. Should we ask before we share?"},
+    {scene:"👩‍🏫💻🎮",say:"Your teacher picked a game for you to play.",ans:"go",ok:"Go! Your teacher chose it, so it is a safe choice.",no:"Think again. Your teacher chose this game."},
+    {scene:"🖥️🎁🎉⚠️",say:"A pop-up says: click here to win a prize!",ans:"stop",ok:"Stop! Pop-ups like this can be tricky. Do not click. Tell a grown-up.",no:"Think again. Pop-ups can be tricky."},
+    {scene:"👵📹👧",say:"A grown-up helps you video call grandma.",ans:"go",ok:"Go! A video call with family and a grown-up is a great choice.",no:"Think again. A grown-up is helping you."},
+    {scene:"📱😢💬",say:"Someone sends you an unkind message.",ans:"ask",ok:"Tell a grown-up. You did nothing wrong.",no:"Think again. Who can help us?"},
+    {scene:"🧒🔑🤫❓",say:"Your friend asks for your password.",ans:"stop",ok:"Stop! Passwords are secret. Even friends do not get them.",no:"Think again. Do we share our password?"}
+  ];
+  var R2=[
+    {scene:"👵🌍❓",say:"You want to talk to grandma far away. What helps?",opts:[["📹","Video call",1],["🖨️","Printer",0],["🔦","Torch",0]],ok:"A video call lets us see and talk to people far away."},
+    {scene:"🐚✨❓",say:"You want to keep a picture of a shell. What helps?",opts:[["📷","Camera",1],["🎧","Headphones",0],["⌨️","Keyboard",0]],ok:"A camera makes a photo we can save."},
+    {scene:"🐢🌊❓",say:"You want to find out about turtles. What helps?",opts:[["🔎","Search",1],["🖱️","Mouse",0],["🔊","Speaker",0]],ok:"We can search to find facts. Ask a grown-up to help."},
+    {scene:"🎨🖼️❓",say:"You want to draw a picture on a screen. What helps?",opts:[["🖍️","Drawing app",1],["📹","Video call",0],["🖨️","Printer",0]],ok:"A drawing app lets us create pictures."}
+  ];
+  var N1=R1.length,N2=R2.length,TOTAL=N1+N2;
+  var LIGHT={go:{label:"Go",ico:"🟢",speak:"Go"},ask:{label:"Ask",ico:"🟠",speak:"Ask a grown-up"},stop:{label:"Stop",ico:"🔴",speak:"Stop"}};
+
+  /* ---------- audio: shared helpers (shared/game-core.js) ---------- */
+  var D=window.DHA;
+  function speak(t){D.speak(t)}
+  function tone(f,s,d,t,v){D.tone(f,s,d,t,v)}
+  function sfx(k){D.sfx(k)}
+
+  /* ---------- state ---------- */
+  var step=0,stars=0,triedWrong=false,answered=false;
+  var app=document.getElementById('app'),dotsEl=document.getElementById('dots');
+  var screens=['start','lights','l_ask','l_priv','l_kind','l_tell','l_recap','game','end','climb','climbend'];
+  var results=[],pts=0,unlocked=false;
+  try{unlocked=localStorage.getItem('tlc_unlocked')==='1'}catch(e){}
+
+  var shuffle=D.shuffle,el=D.el;
+
+  function renderDots(){
+    dotsEl.innerHTML='';
+    if(screens[step]==='climb'||screens[step]==='climbend')return;
+    for(var i=0;i<TOTAL;i++){
+      var c='dot';
+      if(i<results.length)c+=results[i]?' star':' done';
+      else if(i===results.length&&screens[step]==='game')c+=' now';
+      dotsEl.appendChild(el('span',c));
+    }
+  }
+
+  function sayRow(text){
+    var b=el('button','say','🔊');b.type='button';b.setAttribute('aria-label','Hear it again');
+    b.onclick=function(){speak(text)};return b;
+  }
+  function nextBtn(label,cls,fn){
+    var b=el('button','btn '+(cls||''),label);b.type='button';b.onclick=fn;return b;
+  }
+  function go(n){step=n;render()}
+  function next(){go(step+1)}
+
+  /* ---------- screens ---------- */
+  function beep(){
+    return '<svg viewBox="0 0 160 170" width="140" height="150" role="img" aria-label="Beep the robot">'+
+    '<line x1="80" y1="10" x2="80" y2="34" stroke="#2A2660" stroke-width="6" stroke-linecap="round"/><circle cx="80" cy="10" r="9" fill="#E8746C"/>'+
+    '<rect x="22" y="34" width="116" height="92" rx="26" fill="#3AA7A0" stroke="#2A2660" stroke-width="6"/>'+
+    '<circle cx="58" cy="76" r="15" fill="#fff"/><circle cx="102" cy="76" r="15" fill="#fff"/>'+
+    '<circle cx="61" cy="78" r="7" fill="#2A2660"/><circle cx="105" cy="78" r="7" fill="#2A2660"/>'+
+    '<path d="M56 105 Q80 122 104 105" fill="none" stroke="#2A2660" stroke-width="6" stroke-linecap="round"/>'+
+    '<rect x="44" y="130" width="72" height="30" rx="12" fill="#E8746C" stroke="#2A2660" stroke-width="6"/></svg>';
+  }
+
+  function sStart(){
+    var c=el('div','card');
+    c.innerHTML=beep()+'<p class="caption">Hi! I am Beep. Let us play!</p>';
+    var b=nextBtn('▶ Start','coral',function(){sfx('ok');next()});
+    b.style.fontSize='2.2rem';
+    c.appendChild(b);
+    if(unlocked){var cb=nextBtn('🚀 Sky Climb Challenge','',function(){sfx('ok');climbReady=false;go(screens.indexOf('climb'))});cb.style.marginTop='14px';cb.style.display='block';cb.style.marginInline='auto';c.appendChild(cb)}
+    app.appendChild(c);
+    /* no speech yet: the browser needs a tap first */
+  }
+  function sLights(){
+    var t="Look at the traffic lights. Green means go. Orange means ask a grown-up. Red means stop.";
+    var c=el('div','card');
+    c.appendChild(el('p','caption','Traffic lights help us choose!'));
+    var L=el('div','lights');
+    L.innerHTML='<div class="lamp" style="background:var(--go)">Go</div><div class="lamp" style="background:var(--ask)">Ask</div><div class="lamp" style="background:var(--stop)">Stop</div>';
+    c.appendChild(L);
+    var n=el('div','nav');n.appendChild(sayRow(t));n.appendChild(nextBtn('Next ▶','',next));c.appendChild(n);
+    app.appendChild(c);speak(t);
+  }
+  /* ---------- learn first: four rules, each with a tap-to-try ---------- */
+  var PRIV=[["🔑","Password",1],["🏠","Home address",1],["🏫","School name",1],["🎨","Favourite colour",0],["🐢","Favourite animal",0]];
+  function learnShell(scene,title,intro){
+    var c=el('div','card');
+    c.appendChild(el('div','scene',scene));
+    c.appendChild(el('p','caption',title));
+    var top=el('div','nav');top.appendChild(sayRow(intro));c.appendChild(top);
+    var fb=el('p','feedback','');c.appendChild(fb);
+    var nav=el('div','nav');nav.hidden=true;nav.appendChild(nextBtn('Next ▶','',next));
+    return {c:c,fb:fb,nav:nav,intro:intro};
+  }
+  function finishLearn(L,msg){
+    sfx('ok');L.fb.className='feedback ok';L.fb.textContent='⭐ '+msg;speak('Well done! '+msg);L.nav.hidden=false;
+  }
+  function sLearn(s){
+    var L;
+    if(s==='l_ask'){
+      L=learnShell('🧒📱❓','Rule 1: Ask first',"Rule one. Ask first. Before you use a device, or share a photo, ask a grown-up. Tap the hand to ask!");
+      var row=el('div','row');
+      var b=el('button','big pick','<span class="ico">🙋</span>Ask!');b.type='button';
+      b.onclick=function(){b.classList.add('right');b.disabled=true;
+        L.c.querySelector('.scene').textContent='🧒💬👩';
+        finishLearn(L,'The grown-up says: yes, well done for asking!');};
+      row.appendChild(b);L.c.appendChild(row);
+    }
+    else if(s==='l_priv'){
+      L=learnShell('🔒🗄️','Rule 2: Keep private things private',"Rule two. Keep private things private. Tap the private things to lock them in the safe.");
+      var locked=0,row2=el('div','row'),count=el('p','caption','🔒 0 / 3');
+      PRIV.slice().sort(function(){return Math.random()-.5}).forEach(function(o){
+        var b=el('button','big pick','<span class="ico">'+o[0]+'</span>'+o[1]);b.type='button';
+        b.onclick=function(){
+          if(b.disabled)return;
+          if(o[2]){
+            b.disabled=true;b.style.opacity='.55';b.querySelector('.ico').textContent='🔒';locked++;count.textContent='🔒 '+locked+' / 3';
+            sfx('ok');speak('Private! Lock it up.');
+            if(locked===3)finishLearn(L,'Private things stay in the safe.');
+          }else{
+            b.classList.remove('wrong');void b.offsetWidth;b.classList.add('wrong');
+            sfx('no');speak('That one is okay to share. Find the private things.');
+          }
+        };
+        row2.appendChild(b);
+      });
+      L.c.appendChild(count);L.c.appendChild(row2);
+    }
+    else if(s==='l_kind'){
+      L=learnShell('💬🙂','Rule 3: Be kind',"Rule three. Be kind. Tap the kind message.");
+      var row3=el('div','row');
+      [["💖","Great drawing!",1],["💢","That is bad!",0]].sort(function(){return Math.random()-.5}).forEach(function(o){
+        var b=el('button','big pick','<span class="ico">'+o[0]+'</span>'+o[1]);b.type='button';
+        b.onclick=function(){
+          if(L.nav.hidden===false)return;
+          if(o[2]){b.classList.add('right');finishLearn(L,'Kind words make friends happy.');}
+          else{b.classList.remove('wrong');void b.offsetWidth;b.classList.add('wrong');sfx('no');
+            L.fb.className='feedback no';L.fb.textContent='That is not kind. Try the other one.';speak('That is not kind. Try the other one.');}
+        };
+        row3.appendChild(b);
+      });
+      L.c.appendChild(row3);
+    }
+    else if(s==='l_tell'){
+      L=learnShell('📱😟','Rule 4: Tell a grown-up',"Rule four. If something online feels wrong, tell a grown-up. Tap the grown-up to get help!");
+      var row4=el('div','row');
+      var b4=el('button','big pick','<span class="ico">👩</span>Tell!');b4.type='button';
+      b4.onclick=function(){b4.classList.add('right');b4.disabled=true;
+        L.c.querySelector('.scene').textContent='📱🙂👩';
+        finishLearn(L,'You did the right thing. Grown-ups can help.');};
+      row4.appendChild(b4);L.c.appendChild(row4);
+    }
+    else{
+      var t="Now you know the rules. Ask first. Keep private things private. Be kind. Tell a grown-up. Let us play and see what you remember!";
+      L=learnShell('🙋🔒💖👩','Our four rules','Our four rules. Ask first. Keep private things private. Be kind. Tell a grown-up.');
+      var row5=el('div','row');
+      [["🙋","Ask first","Ask first."],["🔒","Keep private","Keep private things private."],["💖","Be kind","Be kind."],["👩","Tell","Tell a grown-up."]].forEach(function(o){
+        var b=el('button','big pick','<span class="ico">'+o[0]+'</span>'+o[1]);b.type='button';b.style.minHeight='120px';
+        b.onclick=function(){speak(o[2])};row5.appendChild(b);
+      });
+      L.c.appendChild(row5);
+      L.nav.innerHTML='';L.nav.appendChild(nextBtn('Let us play ▶','coral',next));L.nav.hidden=false;
+      app.appendChild(L.c);L.c.appendChild(L.nav);speak(t);return;
+    }
+    L.c.appendChild(L.nav);app.appendChild(L.c);speak(L.intro);
+  }
+
+  /* ---------- runner game ---------- */
+  var QS=R1.map(function(q){return {kind:'tl',q:q}}).concat(R2.map(function(q){return {kind:'pick',q:q}}));
+  var ov=document.getElementById('ov'),coinsEl=document.getElementById('coins');
+  var CWD=960,CHT=540,GROUND=440,BEEPX=200,GATE_DIST=4200,LEVEL_LEN=QS.length*GATE_DIST+1600;
+  var EF='"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  var G=null,gameReady=false,coinsGot=0,raf=0,canvas=null,ctx=null,skyImg=null,duneImg=null,lastTs=0;
+  function stopGame(){if(raf)cancelAnimationFrame(raf);raf=0}
+  var scoreEl=document.getElementById('score');
+  function hud(){
+    var inC=screens[step]==='climb'&&C;
+    coinsEl.textContent='🪙 '+(inC?C.coinsN:coinsGot);
+    scoreEl.textContent='🏅 '+(inC?cScore():pts+coinsGot*10);
+  }
+  function updateHud(){hud()}
+  function rr(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath()}
+
+  function buildLevel(){
+    var gates=[],obs=[],coins=[],stars=[];
+    for(var k=0;k<QS.length;k++)gates.push({x:(k+1)*GATE_DIST,state:'closed',idx:k});
+    function near(x){return gates.some(function(g){return x>g.x-800&&x<g.x+350})}
+    function rock(x){obs.push({x:x,w:52,h:52,e:['🪨','🚧','📦'][Math.floor(Math.random()*3)]})}
+    var pos=900;
+    while(pos<LEVEL_LEN-700){
+      if(near(pos)){pos+=200;continue}
+      var r=Math.random();
+      if(r<.36){rock(pos);for(var i=0;i<5;i++)coins.push({x:pos-100+i*50,y:GROUND-70-Math.sin(i/4*Math.PI)*120});pos+=560}
+      else if(r<.56){rock(pos);rock(pos+330);for(var i2=0;i2<4;i2++)coins.push({x:pos+80+i2*45,y:GROUND-190+(i2%2)*12});pos+=780}
+      else if(r<.78){for(var i3=0;i3<6;i3++)coins.push({x:pos+i3*50,y:GROUND-40});pos+=520}
+      else if(r<.9){stars.push({x:pos,y:GROUND-200,got:false});pos+=480}
+      else{for(var i4=0;i4<5;i4++)coins.push({x:pos+i4*55,y:GROUND-40-i4*34});pos+=560}
+    }
+    return {gates:gates,obs:obs,coins:coins,stars:stars};
+  }
+  function newGame(){
+    var L=buildLevel();
+    G={state:'ready',dist:0,speed:0,vy:0,y:0,jumps:0,onGround:true,boost:0,stumble:0,inv:0,t:0,parts:[],gates:L.gates,obs:L.obs,coins:L.coins,stars:L.stars,opened:0};
+    coinsGot=0;pts=0;updateHud();gameReady=true;
+  }
+  function makeBackdrops(){
+    skyImg=document.createElement('canvas');skyImg.width=2400;skyImg.height=340;
+    var c=skyImg.getContext('2d'),B=340;
+    function tower(x,w,h,col){c.fillStyle=col;c.fillRect(x,B-h,w,h);c.fillStyle='rgba(255,255,255,.35)';for(var yy=B-h+14;yy<B-10;yy+=22)c.fillRect(x+6,yy,w-12,4)}
+    var xs=[0,70,150,520,610,700,780,1000,1090,1160,1250,1330,1560,1650,1740,1830,1900,2000,2080,2160,2260,2330];
+    xs.forEach(function(x,k){var w=44+((k*37)%30),h=70+((k*53)%110);if((x>80&&x<300)||(x>420&&x<520)||(x>830&&x<980)||(x>1380&&x<1540))return;tower(x,w,h,k%2?'#c7cde8':'#d3d8ee')});
+    /* Burj Khalifa */
+    c.fillStyle='#aab3da';
+    var bx=360;
+    [[34,0,150],[26,150,230],[20,230,280],[14,280,310],[9,310,328]].forEach(function(t){c.fillRect(bx-t[0],B-t[2],t[0]*2,t[2]-t[1])});
+    c.beginPath();c.moveTo(bx-9,B-310);c.lineTo(bx,B-340);c.lineTo(bx+9,B-310);c.closePath();c.fill();
+    c.fillStyle='rgba(255,255,255,.4)';c.fillRect(bx-3,B-300,6,300);
+    c.fillStyle='#aab3da';c.fillRect(bx-44,B-90,14,90);c.fillRect(bx+30,B-90,14,90);
+    /* Dubai Frame */
+    c.fillStyle='#e0b45a';c.beginPath();c.rect(90,B-170,100,170);c.rect(112,B-146,56,146);
+    c.fill('evenodd');
+    c.fillStyle='rgba(255,255,255,.35)';c.fillRect(90,B-170,100,6);
+    /* Museum of the Future */
+    c.fillStyle='#b4bbdc';c.beginPath();c.ellipse(900,B-90,52,86,0,0,7);c.fill();
+    c.globalCompositeOperation='destination-out';c.beginPath();c.ellipse(900,B-96,22,48,0,0,7);c.fill();c.globalCompositeOperation='source-over';
+    c.fillStyle='#b4bbdc';c.fillRect(884,B-24,32,24);c.fillRect(870,B-8,60,8);
+    /* Burj Al Arab on its island */
+    c.fillStyle='#e3dccb';c.beginPath();c.ellipse(1460,B-4,90,8,0,0,7);c.fill();
+    c.fillStyle='#c0c7e6';c.beginPath();c.moveTo(1424,B-6);c.lineTo(1424,B-170);c.quadraticCurveTo(1500,B-150,1488,B-6);c.closePath();c.fill();
+    c.fillStyle='#aab3da';c.beginPath();c.moveTo(1424,B-6);c.lineTo(1424,B-170);c.lineTo(1434,B-196);c.lineTo(1440,B-6);c.closePath();c.fill();
+    c.fillRect(1470,B-60,26,54);
+    duneImg=document.createElement('canvas');duneImg.width=1920;duneImg.height=200;
+    var d=duneImg.getContext('2d');
+    [['#f4dfae',.0045,60,110],['#ecce8d',.007,40,70]].forEach(function(L){
+      d.fillStyle=L[0];d.beginPath();d.moveTo(0,200);
+      for(var xx=0;xx<=1920;xx+=8)d.lineTo(xx,200-(L[3]+Math.sin(xx*L[1]*Math.PI)*L[2]*.5+Math.sin(xx*L[1]*2.3*Math.PI)*L[2]*.25));
+      d.lineTo(1920,200);d.closePath();d.fill();
+    });
+  }
+
+  function jump(){
+    if(!G)return;
+    if(G.state==='ready'){G.state='run';return}
+    if(G.state!=='run'||G.brake)return;
+    if(G.onGround){G.vy=830;G.jumps=1;G.onGround=false;tone(520,0,.1,'square',.07)}
+    else if(G.jumps<2){G.vy=740;G.jumps=2;tone(740,0,.12,'square',.07);puff()}
+  }
+  function puff(){for(var i=0;i<8;i++)G.parts.push({x:G.dist-30,y:GROUND-G.y-30,vx:-80-Math.random()*80,vy:60+Math.random()*80,life:.5,col:'#F6B93B',s:6})}
+  function spark(wx,sy,col){for(var i=0;i<7;i++)G.parts.push({x:wx,y:sy,vx:(Math.random()-.5)*220,vy:(Math.random()-.5)*220,life:.45,col:col,s:5})}
+
+  function buildQ(item,onDone){
+    var q=item.q,tl=item.kind==='tl',done=false,wrong=false;
+    var c=el('div','card');
+    c.appendChild(el('div','scene',q.scene));
+    c.appendChild(el('p','caption',q.say));
+    var top=el('div','nav');top.appendChild(sayRow(q.say));c.appendChild(top);
+    var fb=el('p','feedback','');c.appendChild(fb);
+    var row=el('div','row');
+    var nav=el('div','nav');nav.hidden=true;
+    nav.appendChild(nextBtn('Open the gate ▶','',function(){onDone(!wrong)}));
+    function good(b,msg){done=true;b.classList.add('right');sfx('ok');fb.className='feedback ok';fb.textContent='⭐ '+msg;speak('Well done! '+msg);nav.hidden=false}
+    function bad(b,msg,say){wrong=true;if(b){b.classList.remove('wrong');void b.offsetWidth;b.classList.add('wrong')}sfx('no');fb.className='feedback no';fb.textContent=msg;speak(say||msg)}
+    if(tl){
+      ['go','ask','stop'].forEach(function(k){
+        var b=el('button','big '+k,'<span class="ico">'+LIGHT[k].ico+'</span>'+LIGHT[k].label);
+        b.type='button';b.setAttribute('aria-label',LIGHT[k].speak);
+        b.onclick=function(){if(done)return;if(k===q.ans)good(b,q.ok);else bad(b,q.no,q.no+' Try again.')};
+        row.appendChild(b);
+      });
+    }else{
+      shuffle(q.opts).forEach(function(o){
+        var b=el('button','big pick','<span class="ico">'+o[0]+'</span>'+o[1]);
+        b.type='button';b.setAttribute('aria-label',o[1]);
+        b.onclick=function(){if(done)return;if(o[2])good(b,q.ok);else bad(b,'Not this one. Try again.')};
+        row.appendChild(b);
+      });
+    }
+    c.appendChild(row);c.appendChild(nav);
+    return c;
+  }
+  function startAsk(gate){
+    G.state='asking';G.speed=0;
+    var k=gate.idx,item=QS[k];
+    var card=buildQ(item,function(first){
+      results.push(first);if(first)stars++;pts+=first?100:50;hud();
+      gate.state='open';G.opened++;ov.hidden=true;ov.innerHTML='';renderDots();
+      G.boost=3;G.state='run';G.inv=0;
+      tone(523,0,.12);tone(659,.1,.12);tone(784,.2,.12);tone(1047,.3,.25);
+      speak(G.opened===QS.length?'All the gates are open! Run to the trophy!':'Gate open! Speed boost!');
+    });
+    ov.innerHTML='';ov.appendChild(card);ov.hidden=false;
+    speak((k===N1?'Now, different jobs need different IT. ':'')+item.q.say);
+  }
+
+  function update(dt){
+    var g=G;g.t+=dt;
+    if(g.state==='ready'||g.state==='asking'||g.state==='done')return;
+    var target=320;
+    if(g.boost>0){target=520;g.boost-=dt;if(Math.random()<.5)g.parts.push({x:g.dist-20,y:GROUND-g.y-40-Math.random()*40,vx:-120,vy:(Math.random()-.5)*60,life:.35,col:'#E8746C',s:8})}
+    if(g.stumble>0){target=140;g.stumble-=dt}
+    if(g.inv>0)g.inv-=dt;
+    g.brake=false;var gate=null;for(var i=0;i<g.gates.length;i++){if(g.gates[i].state==='closed'){gate=g.gates[i];break}}
+    if(gate){
+      var rem=gate.x-260-g.dist;g.brake=rem<160;
+      if(rem<420)target=Math.min(target,Math.max(30,rem*1.1+30));
+      if(rem<=3&&g.onGround){g.dist=Math.max(g.dist,gate.x-260);startAsk(gate);return}
+      if(rem<0)g.dist=gate.x-260;
+    }
+    g.speed+=(target-g.speed)*Math.min(1,dt*6);
+    g.dist+=g.speed*dt;
+    g.vy-=2300*dt;g.y+=g.vy*dt;
+    if(g.y<=0){g.y=0;g.vy=0;g.onGround=true;g.jumps=0}else g.onGround=false;
+    /* obstacles */
+    if(g.inv<=0){
+      for(var o=0;o<g.obs.length;o++){var ob=g.obs[o];
+        if(Math.abs(ob.x-g.dist)<ob.w/2+18&&g.y<ob.h-14){
+          g.stumble=.8;g.inv=1.3;g.vy=Math.max(g.vy,380);g.onGround=false;
+          var lose=Math.min(2,coinsGot);coinsGot-=lose;updateHud();tone(150,0,.25,'sawtooth',.12);spark(g.dist,GROUND-g.y-50,'#ffffff');break}
+      }
+    }
+    /* coins and stars */
+    for(var c=0;c<g.coins.length;c++){var co=g.coins[c];
+      if(!co.got&&Math.abs(co.x-g.dist)<38&&Math.abs((GROUND-co.y)-(g.y+50))<62){co.got=true;coinsGot++;updateHud();tone(988,0,.08);tone(1319,.07,.16);spark(co.x,co.y,'#F6B93B')}}
+    for(var s=0;s<g.stars.length;s++){var st=g.stars[s];
+      if(!st.got&&Math.abs(st.x-g.dist)<45&&Math.abs((GROUND-st.y)-(g.y+50))<70){st.got=true;g.boost=2.2;tone(660,0,.1);tone(880,.1,.1);tone(1100,.2,.2);spark(st.x,st.y,'#ffffff')}}
+    /* particles */
+    g.parts=g.parts.filter(function(p){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;return p.life>0});
+    /* finish */
+    if(g.opened===QS.length&&g.dist>=LEVEL_LEN-30){g.state='done';go(screens.indexOf('end'))}
+  }
+
+  function sx(wx){return wx-G.dist+BEEPX}
+  function drawBeep(x,fy,t,air,jet,flash,sc){
+    if(flash&&Math.floor(t*14)%2)return;
+    ctx.save();ctx.translate(x,fy);ctx.scale(sc||.85,sc||.85);
+    var run=air?0:Math.sin(t*18)*7;
+    ctx.lineWidth=4;ctx.strokeStyle='#2A2660';
+    ctx.fillStyle='#2A2660';rr(-50,-96,24,52,8);ctx.fill();
+    if(jet){ctx.fillStyle='#F6B93B';ctx.beginPath();ctx.moveTo(-48,-44);ctx.lineTo(-28,-44);ctx.lineTo(-38,-44+26+Math.random()*16);ctx.fill();ctx.fillStyle='#E8746C';ctx.beginPath();ctx.moveTo(-43,-44);ctx.lineTo(-33,-44);ctx.lineTo(-38,-44+14+Math.random()*8);ctx.fill()}
+    ctx.fillStyle='#2A2660';rr(-18+run,-22,16,22,6);ctx.fill();rr(4-run,-22,16,22,6);ctx.fill();
+    ctx.fillStyle='#E8746C';rr(-26,-64,52,46,12);ctx.fill();ctx.stroke();
+    ctx.fillStyle='#3AA7A0';rr(-31,-122,62,54,16);ctx.fill();ctx.stroke();
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-12,-98,9,0,7);ctx.arc(12,-98,9,0,7);ctx.fill();
+    ctx.fillStyle='#2A2660';ctx.beginPath();ctx.arc(-9,-97,4.5,0,7);ctx.arc(15,-97,4.5,0,7);ctx.fill();
+    ctx.beginPath();ctx.arc(0,-84,10,.15*Math.PI,.85*Math.PI);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(0,-122);ctx.lineTo(0,-138);ctx.stroke();
+    ctx.fillStyle='#E8746C';ctx.beginPath();ctx.arc(0,-141,6,0,7);ctx.fill();
+    ctx.restore();
+  }
+  function drawGate(g){
+    var x=sx(g.x);if(x<-120||x>CWD+120)return;
+    ctx.fillStyle='#2A2660';ctx.fillRect(x-7,GROUND-210,14,210);
+    rr(x-40,GROUND-370,80,165,16);ctx.fill();
+    var cols=['#D8453D','#F29A1F','#2E9E5B'],lit=g.state==='open'?2:0;
+    for(var i=0;i<3;i++){
+      ctx.beginPath();ctx.arc(x,GROUND-335+i*47,19,0,7);
+      ctx.fillStyle=(i===lit)?cols[i]:'#4a4570';ctx.fill();
+      if(i===lit){ctx.save();ctx.globalAlpha=.35;ctx.beginPath();ctx.arc(x,GROUND-335+i*47,31,0,7);ctx.fillStyle=cols[i];ctx.fill();ctx.restore()}
+    }
+    if(g.state==='closed'){ctx.fillStyle='#fff';ctx.font='800 34px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('?',x,GROUND-384)}
+  }
+  function draw(){
+    var g=G,t=g.t;
+    var sky=ctx.createLinearGradient(0,0,0,GROUND);sky.addColorStop(0,'#8fd3ee');sky.addColorStop(1,'#fff3d6');
+    ctx.fillStyle=sky;ctx.fillRect(0,0,CWD,CHT);
+    ctx.fillStyle='#F6B93B';ctx.beginPath();ctx.arc(780,110,52,0,7);ctx.fill();
+    ctx.font='64px '+EF;ctx.textAlign='center';ctx.textBaseline='middle';
+    [['☁️',140,90,.05],['☁️',470,60,.08],['☁️',900,150,.06]].forEach(function(c){ctx.fillText(c[0],((c[1]-g.dist*c[3])%1100+1100)%1100-60,c[2])});
+    var o1=-(g.dist*.12%2400);ctx.drawImage(skyImg,o1,GROUND-320,2400,340);ctx.drawImage(skyImg,o1+2400,GROUND-320,2400,340);
+    var o2=-(g.dist*.3%1920);ctx.drawImage(duneImg,o2,GROUND-170,1920,200);ctx.drawImage(duneImg,o2+1920,GROUND-170,1920,200);
+    ctx.font='56px '+EF;ctx.textAlign='center';ctx.textBaseline='alphabetic';
+    for(var dk=0;dk<4;dk++){var dx=((dk*450-g.dist*.55)%1800+1800)%1800-100;ctx.fillText(dk%3===1?'🐪':'🌴',dx,GROUND+4)}
+    ctx.fillStyle='#e6c47e';ctx.fillRect(0,GROUND,CWD,CHT-GROUND);
+    ctx.fillStyle='#2A2660';ctx.fillRect(0,GROUND,CWD,6);
+    ctx.fillStyle='#fffdf7';var off=-(g.dist%140);for(var x=off;x<CWD;x+=140)ctx.fillRect(x,GROUND+60,70,8);
+    g.gates.forEach(drawGate);
+    ctx.font='120px '+EF;ctx.textAlign='center';ctx.textBaseline='alphabetic';
+    var tx=sx(LEVEL_LEN);if(tx<CWD+100)ctx.fillText('🏆',tx,GROUND);
+    ctx.font='56px '+EF;ctx.textBaseline='middle';
+    g.obs.forEach(function(o){var x=sx(o.x);if(x>-60&&x<CWD+60)ctx.fillText(o.e,x,GROUND-28)});
+    ctx.font='36px '+EF;
+    g.coins.forEach(function(c){if(c.got)return;var x=sx(c.x);if(x>-40&&x<CWD+40)ctx.fillText('🪙',x,c.y)});
+    ctx.font='54px '+EF;
+    g.stars.forEach(function(s){if(s.got)return;var x=sx(s.x);if(x>-40&&x<CWD+40)ctx.fillText('⭐',x,s.y+Math.sin(t*4)*8)});
+    g.parts.forEach(function(p){ctx.globalAlpha=Math.max(0,p.life*2);ctx.fillStyle=p.col;ctx.fillRect(sx(p.x),p.y,p.s,p.s)});ctx.globalAlpha=1;
+    drawBeep(BEEPX,GROUND-g.y,t,!g.onGround,!g.onGround&&g.vy>0,g.inv>0);
+    /* progress bar */
+    var bx=130,bw=700,by=28;
+    ctx.fillStyle='rgba(255,255,255,.85)';rr(bx-14,by-16,bw+28,32,16);ctx.fill();
+    ctx.fillStyle='#e3dccb';rr(bx,by-5,bw,10,5);ctx.fill();
+    ctx.fillStyle='#3AA7A0';rr(bx,by-5,Math.max(10,bw*Math.min(1,g.dist/LEVEL_LEN)),10,5);ctx.fill();
+    g.gates.forEach(function(gt){ctx.beginPath();ctx.arc(bx+bw*gt.x/LEVEL_LEN,by,7,0,7);ctx.fillStyle=gt.state==='open'?'#2E9E5B':'#D8453D';ctx.fill()});
+    ctx.font='30px '+EF;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('🏆',bx+bw+34,by);
+    if(g.state==='ready'){
+      ctx.fillStyle='rgba(42,38,96,.55)';ctx.fillRect(0,0,CWD,CHT);
+      ctx.fillStyle='#fff';ctx.font='800 64px "Baloo 2","Trebuchet MS",sans-serif';ctx.textAlign='center';ctx.fillText('Click to run!',CWD/2,CHT/2-10);
+      ctx.font='96px '+EF;ctx.fillText('▶️',CWD/2,CHT/2+90+Math.sin(t*5)*6);
+    }
+  }
+  function loop(ts){
+    if(!lastTs)lastTs=ts;
+    var dt=Math.min(.033,(ts-lastTs)/1000)*(window.__tlcTimeScale||1);lastTs=ts;
+    var sc=screens[step];
+    if(sc==='game'&&G){update(dt);if(G.state!=='done'&&ctx&&screens[step]==='game')draw()}
+    else if(sc==='climb'&&C&&ctx){cupdate(dt);if(screens[step]==='climb')cdraw()}
+    raf=requestAnimationFrame(loop);
+  }
+  function sGame(){
+    if(!gameReady)newGame();
+    if(!skyImg)makeBackdrops();
+    updateHud();
+    var intro="Help Beep run to the trophy! Click, or press space, to jump over the rocks and collect coins. A traffic light gate will ask you a question. Answer it to open the gate!";
+    var wrap=el('div','gamewrap');
+    canvas=document.createElement('canvas');canvas.className='gcanvas';
+    var dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=CWD*dpr;canvas.height=CHT*dpr;
+    ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+    canvas.setAttribute('aria-label','Beep the robot runs along a road');canvas.tabIndex=0;
+    canvas.addEventListener('pointerdown',function(e){e.preventDefault();jump()});
+    wrap.appendChild(canvas);
+    var bar=el('div','nav');bar.appendChild(sayRow(intro));
+    var jb=el('button','btn coral','⬆ Jump!');jb.type='button';jb.style.fontSize='2rem';jb.style.padding='14px 60px';
+    jb.addEventListener('pointerdown',function(e){e.preventDefault();jump()});
+    bar.appendChild(jb);wrap.appendChild(bar);
+    app.appendChild(wrap);
+    G.t=0;lastTs=0;draw();
+    stopGame();raf=requestAnimationFrame(loop);
+    speak(intro);
+  }
+
+  function sEnd(){
+    var first=!unlocked;
+    unlocked=true;try{localStorage.setItem('tlc_unlocked','1')}catch(e){}
+    var sc=pts+coinsGot*10;
+    var t="Amazing! You found the trophy! You got "+stars+" stars out of "+TOTAL+" and "+coinsGot+" coins. Your score is "+sc+". "+(first?"You unlocked the Sky Climb challenge! ":"")+"Now go and make your poster in Seesaw!";
+    var c=el('div','card');
+    c.appendChild(el('div','scene','🏆'));
+    c.appendChild(el('div','stars',(Array(stars+1).join('⭐'))||'🌟'));
+    c.appendChild(el('p','caption',stars+' / '+TOTAL+' stars   🪙 '+coinsGot+'   🏅 '+sc));
+    if(first)c.appendChild(el('p','caption','🔓 New: Sky Climb challenge!'));
+    c.appendChild(el('div','scene','🎨🖍️📱'));
+    c.appendChild(el('p','caption','Now make your poster in Seesaw!'));
+    var n=el('div','nav');n.appendChild(sayRow(t));
+    n.appendChild(nextBtn('🚀 Sky Climb Challenge','coral',function(){climbReady=false;go(screens.indexOf('climb'))}));
+    n.appendChild(nextBtn('Play again','',restart));c.appendChild(n);
+    app.appendChild(c);sfx('win');speak(t);confetti();
+  }
+  /* ---------- Sky Climb challenge ---------- */
+  var R3=[
+    {scene:"🎮⬇️❓",say:"A game says: download this app now!",ans:"ask",ok:"Ask a grown-up first. Some downloads are not safe.",no:"Think again. Should we download things on our own?"},
+    {scene:"👵📹🎨",say:"You show your drawing to grandma on a video call with a grown-up.",ans:"go",ok:"Go! Sharing with family and a grown-up is a safe choice.",no:"Think again. Family and a grown-up are with you."},
+    {scene:"🎮👤➕❓",say:"Someone you do not know asks to be your friend in a game.",ans:"stop",ok:"Stop! Do not say yes to people you do not know.",no:"Think again. Do we know this person?"},
+    {scene:"📱😨",say:"You see a picture that makes you feel scared.",ans:"ask",ok:"Tell a grown-up right away. You did nothing wrong.",no:"Think again. Who can help when we feel scared?"},
+    {scene:"🏠📱🙋",say:"You want to use a tablet at home.",ans:"ask",ok:"Ask a grown-up first.",no:"Think again. Should we ask first?"},
+    {scene:"👩‍🏫💻✏️",say:"Your teacher says: type your name on the class page.",ans:"go",ok:"Go! Your teacher asked you to, so it is safe.",no:"Think again. Your teacher asked you."},
+    {scene:"📱💬🏠❓",say:"A message says: tell me where you live.",ans:"stop",ok:"Stop! Never tell people where you live online.",no:"Think again. Is our address private?"},
+    {scene:"👧📱👨‍👩‍👧",say:"A grown-up is next to you while you chat to your cousin.",ans:"go",ok:"Go! A grown-up is with you, so this is safe.",no:"Think again. A grown-up is right there."}
+  ];
+  var R3p=[
+    {scene:"📖🔊❓",say:"You want to hear a story read out loud. What helps?",opts:[["🔊","Speaker",1],["⌨️","Keyboard",0],["🖱️","Mouse",0]],ok:"A speaker plays sound so we can listen."},
+    {scene:"✏️⌨️❓",say:"You want to type your name. What helps?",opts:[["⌨️","Keyboard",1],["🔊","Speaker",0],["🖨️","Printer",0]],ok:"A keyboard lets us type words."},
+    {scene:"🖼️📄❓",say:"You want a paper copy of your picture. What helps?",opts:[["🖨️","Printer",1],["🎧","Headphones",0],["🔦","Torch",0]],ok:"A printer puts our picture on paper."},
+    {scene:"📚📟❓",say:"You want to scan the barcode on a book. What helps?",opts:[["📟","Scanner",1],["⌨️","Keyboard",0],["🖱️","Mouse",0]],ok:"A scanner reads the barcode."}
+  ];
+  var BANK=QS.concat(R3.map(function(q){return {kind:'tl',q:q}}),R3p.map(function(q){return {kind:'pick',q:q}}));
+  var CLW=720,CLH=540,C=null,climbReady=false,keys={left:false,right:false},bestM=0,cStars=[];
+  var CLOUDS=[[90,40],[330,230],[560,400],[200,520]];
+  try{bestM=+localStorage.getItem('tlc_best')||0}catch(e){}
+  window.__tlcDbg=function(){return C};
+  function lerp(a,b,t){return a+(b-a)*t}
+  function mix(a,b,t){return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')'}
+  function cScore(){return C?Math.floor(C.maxH/10)+C.pts+C.coinsN*10:0}
+  function cSY(wy){return CLH-(wy-C.cam)}
+
+  function genPlats(){
+    while(C.topY<C.cam+CLH+260){
+      var diff=Math.min(1,(C.topY-60)/4000);
+      C.topY+=75+Math.random()*(60+diff*45);
+      var w=Math.max(72,132-diff*50)*(1+Math.random()*.25);
+      var type=Math.random()<diff*.45?'move':'static';
+      var p={x:w/2+Math.random()*(CLW-w),y:C.topY,w:w,type:type,dir:Math.random()<.5?-1:1,spd:50+Math.random()*70,spring:false,fall:0};
+      if(type==='static'&&Math.random()<.12)p.spring=true;
+      C.plats.push(p);
+      if(Math.random()<.35){var w2=w*.9;C.plats.push({x:w2/2+Math.random()*(CLW-w2),y:C.topY+(Math.random()*40-20),w:w2,type:Math.random()<.5?'fragile':'static',dir:1,spd:0,spring:false,fall:0})}
+      if(Math.random()<.35)C.coins.push({x:p.x,y:p.y+55,got:false});
+    }
+  }
+  function cNew(){
+    C={state:'ready',x:CLW/2,tx:CLW/2,wy:60,vy:900,cam:0,maxH:0,plats:[{x:CLW/2,y:60,w:CLW+60,type:'start',dir:1,spd:0,spring:false,fall:0}],coins:[],t:0,coinsN:0,pts:0,ans:0,okFirst:0,nextQ:1200,pool:shuffle(BANK),topY:60};
+    genPlats();climbReady=true;
+    if(!cStars.length)for(var i=0;i<70;i++)cStars.push({x:Math.random()*CLW,y:Math.random()*CLH,r:1+Math.random()*2});
+  }
+  function startCAsk(){
+    C.state='asking';
+    if(!C.pool.length)C.pool=shuffle(BANK);
+    var item=C.pool.pop();
+    var card=buildQ(item,function(first){
+      C.pts+=first?100:50;C.ans++;if(first)C.okFirst++;
+      C.nextQ+=1200;ov.hidden=true;ov.innerHTML='';
+      C.vy=1500;C.state='play';hud();
+      tone(523,0,.12);tone(659,.1,.12);tone(784,.2,.12);tone(1047,.3,.25);
+      speak('Rocket boost! Climb higher!');
+    });
+    ov.innerHTML='';ov.appendChild(card);ov.hidden=false;
+    speak(item.q.say);
+  }
+  function cupdate(dt){
+    var c=C;c.t+=dt;
+    if(c.state!=='play')return;
+    var kx=(keys.left?-1:0)+(keys.right?1:0);
+    if(kx){c.x+=kx*520*dt;c.tx=c.x}
+    else{var dx=c.tx-c.x;c.x+=Math.sign(dx)*Math.min(Math.abs(dx),950*dt)}
+    if(c.x<-10)c.x=CLW+10;if(c.x>CLW+10)c.x=-10;
+    c.plats.forEach(function(p){
+      if(p.type==='move'){p.x+=p.dir*p.spd*dt;if(p.x<p.w/2||p.x>CLW-p.w/2)p.dir*=-1}
+      if(p.fall)p.y-=500*dt;
+    });
+    var prev=c.wy;
+    c.vy-=1900*dt;c.wy+=c.vy*dt;
+    if(c.vy<0){
+      for(var i=0;i<c.plats.length;i++){var p=c.plats[i];
+        if(!p.fall&&prev>=p.y&&c.wy<=p.y&&Math.abs(c.x-p.x)<p.w/2+14){
+          c.wy=p.y;c.vy=p.spring?1350:900;
+          if(p.type==='fragile')p.fall=1;
+          tone(p.spring?880:440,0,.1,'square',.07);break}
+      }
+    }
+    if(c.wy-c.cam>300)c.cam=c.wy-300;
+    c.maxH=Math.max(c.maxH,c.wy-60);
+    c.coins.forEach(function(k){if(!k.got&&Math.abs(k.x-c.x)<34&&Math.abs(k.y-(c.wy+40))<50){k.got=true;c.coinsN++;hud();tone(988,0,.08);tone(1319,.07,.16)}});
+    c.plats=c.plats.filter(function(p){return p.y>c.cam-150});
+    c.coins=c.coins.filter(function(k){return k.y>c.cam-100&&!k.got});
+    genPlats();
+    hud();
+    if(c.maxH>=c.nextQ){startCAsk();return}
+    if(c.wy<c.cam-90){c.state='over';sfx('no');go(screens.indexOf('climbend'))}
+  }
+  function cdraw(){
+    var c=C,t=Math.min(1,c.cam/7000);
+    var g=ctx.createLinearGradient(0,0,0,CLH);
+    g.addColorStop(0,mix([143,211,238],[20,18,66],t));g.addColorStop(1,mix([255,243,214],[70,62,140],t));
+    ctx.fillStyle=g;ctx.fillRect(0,0,CLW,CLH);
+    if(t>.25){ctx.fillStyle='#fff';ctx.globalAlpha=Math.min(1,(t-.25)*2);cStars.forEach(function(s){ctx.fillRect(s.x,(s.y+c.cam*.08)%CLH,s.r,s.r)});ctx.globalAlpha=1}
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    if(t<.6){ctx.globalAlpha=1-t/.6;ctx.fillStyle='#F6B93B';ctx.beginPath();ctx.arc(600,100+c.cam*.05,46,0,7);ctx.fill();ctx.globalAlpha=1}
+    if(t>.45){ctx.globalAlpha=Math.min(1,(t-.45)*2);ctx.font='72px '+EF;ctx.fillText('🌙',110,110);ctx.globalAlpha=1}
+    var top=CLH-60-340+c.cam*.35;
+    if(top<CLH)ctx.drawImage(skyImg,0,0,CLW,340,0,top,CLW,340);
+    ctx.font='64px '+EF;ctx.globalAlpha=Math.max(0,1-t*1.4);
+    CLOUDS.forEach(function(k){ctx.fillText('☁️',k[0],((k[1]+c.cam*.6)%(CLH+240))-80)});ctx.globalAlpha=1;
+    var cy=cSY(60+c.nextQ);
+    if(cy>-30&&cy<CLH+30){
+      ctx.strokeStyle='#F6B93B';ctx.lineWidth=6;ctx.setLineDash([22,14]);ctx.beginPath();ctx.moveTo(0,cy);ctx.lineTo(CLW,cy);ctx.stroke();ctx.setLineDash([]);
+      ctx.font='52px '+EF;ctx.fillText('🚦',50,cy);ctx.fillText('❓',CLW/2,cy);ctx.fillText('🚦',CLW-50,cy);
+    }
+    c.plats.forEach(function(p){
+      var y=cSY(p.y);if(y<-30||y>CLH+70)return;
+      if(p.type==='start'){ctx.fillStyle='#e6c47e';ctx.fillRect(p.x-p.w/2,y,p.w,CLH-y+10);ctx.fillStyle='#2A2660';ctx.fillRect(p.x-p.w/2,y,p.w,6);return}
+      ctx.fillStyle=p.type==='move'?'#E8746C':p.type==='fragile'?'#f3dba5':'#3AA7A0';
+      ctx.strokeStyle='#2A2660';ctx.lineWidth=3;rr(p.x-p.w/2,y,p.w,16,8);ctx.fill();ctx.stroke();
+      if(p.type==='fragile'){ctx.beginPath();ctx.moveTo(p.x-6,y+2);ctx.lineTo(p.x,y+8);ctx.lineTo(p.x-3,y+14);ctx.stroke()}
+      if(p.spring){ctx.fillStyle='#D8453D';rr(p.x-12,y-14,24,14,4);ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(p.x-8,y-8);ctx.lineTo(p.x+8,y-8);ctx.stroke()}
+    });
+    ctx.font='36px '+EF;c.coins.forEach(function(k){ctx.fillText('🪙',k.x,cSY(k.y))});
+    drawBeep(c.x,cSY(c.wy),c.t,true,c.vy>1050,false,.62);
+    var m=Math.floor(c.maxH/10);
+    ctx.fillStyle='rgba(255,255,255,.88)';rr(12,12,190,50,25);ctx.fill();
+    ctx.fillStyle='#2A2660';ctx.font='800 30px "Baloo 2","Trebuchet MS",sans-serif';ctx.textAlign='left';ctx.fillText('⛰️ '+m+' m',26,38);
+    ctx.fillStyle='rgba(255,255,255,.88)';rr(CLW-182,12,170,50,25);ctx.fill();
+    ctx.fillStyle='#2A2660';ctx.textAlign='right';ctx.fillText('🏆 '+bestM+' m',CLW-24,38);
+    if(c.state==='ready'){
+      ctx.fillStyle='rgba(42,38,96,.55)';ctx.fillRect(0,0,CLW,CLH);
+      ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='800 52px "Baloo 2","Trebuchet MS",sans-serif';ctx.fillText('Click to climb!',CLW/2,CLH/2-30);
+      ctx.font='84px '+EF;ctx.fillText('↔️🖱️',CLW/2,CLH/2+60+Math.sin(c.t*5)*6);
+    }
+  }
+  function sClimb(){
+    if(!climbReady)cNew();
+    if(!skyImg)makeBackdrops();
+    keys.left=keys.right=false;
+    hud();
+    var intro="Sky Climb challenge! Move your mouse left and right to steer Beep. Beep jumps by itself. Land on the platforms and climb as high as you can! Answer the traffic light questions to get a rocket boost!";
+    var wrap=el('div','gamewrap');
+    canvas=document.createElement('canvas');canvas.className='gcanvas';
+    var dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=CLW*dpr;canvas.height=CLH*dpr;
+    canvas.style.aspectRatio='4/3';canvas.style.maxWidth='640px';canvas.style.touchAction='none';
+    ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+    canvas.setAttribute('aria-label','Beep jumps up the platforms');
+    function px(e){var r=canvas.getBoundingClientRect();return (e.clientX-r.left)/r.width*CLW}
+    canvas.addEventListener('pointermove',function(e){if(C)C.tx=px(e)});
+    canvas.addEventListener('pointerdown',function(e){e.preventDefault();if(!C)return;C.tx=px(e);if(C.state==='ready')C.state='play'});
+    wrap.appendChild(canvas);
+    var bar=el('div','nav');bar.appendChild(sayRow(intro));
+    [['left','◀'],['right','▶']].forEach(function(a){
+      var b=el('button','btn',a[1]);b.type='button';b.style.minWidth='110px';b.style.fontSize='2rem';
+      b.addEventListener('pointerdown',function(e){e.preventDefault();keys[a[0]]=true;if(C.state==='ready')C.state='play'});
+      ['pointerup','pointerleave','pointercancel'].forEach(function(n){b.addEventListener(n,function(){keys[a[0]]=false})});
+      bar.appendChild(b);
+    });
+    wrap.appendChild(bar);app.appendChild(wrap);
+    C.t=0;lastTs=0;cdraw();stopGame();raf=requestAnimationFrame(loop);
+    speak(intro);
+  }
+  function sClimbEnd(){
+    var m=Math.floor(C.maxH/10),sc=cScore(),isBest=m>bestM;
+    if(isBest){bestM=m;try{localStorage.setItem('tlc_best',String(m))}catch(e){}}
+    var t='Oh no, Beep fell! You climbed '+m+' metres. '+(isBest?'That is your best ever!':'Your best is '+bestM+' metres.');
+    var c=el('div','card');
+    c.appendChild(el('div','scene','⛰️'));
+    c.appendChild(el('div','stars',m+' m'));
+    c.appendChild(el('p','caption',(isBest?'🏆 New best!   ':'Best '+bestM+' m   ')+'🏅 '+sc));
+    c.appendChild(el('p','caption','⭐ '+C.okFirst+' / '+C.ans+' right first time'));
+    var n=el('div','nav');n.appendChild(sayRow(t));
+    n.appendChild(nextBtn('Play again','coral',function(){climbReady=false;go(screens.indexOf('climb'))}));
+    n.appendChild(nextBtn('Home','',function(){go(0)}));
+    c.appendChild(n);app.appendChild(c);speak(t);
+  }
+  function confetti(){D.confetti()}
+
+  function render(){
+    stopGame();app.innerHTML='';
+    D.stopSpeaking();
+    var s=screens[step];
+    renderDots();
+    if(s==='start')sStart();
+    else if(s==='lights')sLights();
+    else if(s.indexOf('l_')===0)sLearn(s);
+    else if(s==='game')sGame();
+    else if(s==='end')sEnd();
+    else if(s==='climb')sClimb();
+    else if(s==='climbend')sClimbEnd();
+    window.scrollTo(0,0);
+  }
+  function restart(){stars=0;results=[];coinsGot=0;pts=0;gameReady=false;stopGame();ov.hidden=true;ov.innerHTML='';step=0;render()}
+
+  /* ---------- teacher menu (T key, built by shared core) ---------- */
+  D.teacherMenu({
+    restart:function(){restart()},
+    items:[
+      ['Skip to the game',function(){results=[];stars=0;gameReady=false;go(screens.indexOf('game'))}],
+      ['Unlock + go to challenge',function(){unlocked=true;try{localStorage.setItem('tlc_unlocked','1')}catch(e){}climbReady=false;go(screens.indexOf('climb'))}]
+    ]
+  });
+  function ck(e,v){var k=e.key;if(k==='ArrowLeft'||k==='a'||k==='A')keys.left=v;else if(k==='ArrowRight'||k==='d'||k==='D')keys.right=v;else return;if(v&&C&&C.state==='ready')C.state='play';e.preventDefault()}
+  document.addEventListener('keyup',function(e){if(e.key===' '&&screens[step]==='game')e.preventDefault();if(screens[step]==='climb')ck(e,false)});
+  document.addEventListener('keydown',function(e){
+    if(e.key==='t'||e.key==='T')return;
+    if(screens[step]==='climb'&&ov.hidden){if(e.key===' '&&C&&C.state==='ready'){C.state='play';e.preventDefault()}ck(e,true);return}
+    if((e.key===' '||e.key==='ArrowUp'||e.key==='w'||e.key==='W')&&screens[step]==='game'&&ov.hidden){e.preventDefault();if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();jump()}
+  });
+  render();
+})();
+</script>
+</body>
+</html>
